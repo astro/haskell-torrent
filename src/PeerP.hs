@@ -116,6 +116,7 @@ senderP logC h ch supC = spawnP (SPCF logC ch) h (catchP (foreverP pgm)
 data SendQueueMessage = SendQCancel PieceNum Block -- ^ Peer requested that we cancel a piece
                       | SendQMsg Message           -- ^ We want to send the Message to the peer
                       | SendOChoke                 -- ^ We want to choke the peer
+		      | SendQRequestPrune PieceNum Block -- ^ Prune SendQueue of this (pn, blk) pair
 
 data SQCF = SQCF { sqLogC :: LogChannel
 		 , sqInCh :: Channel SendQueueMessage
@@ -160,7 +161,9 @@ sendQueueP logC inC outC bandwC supC = spawnP (SQCF logC inC outC bandwC) (SQST 
 					   modifyQ (Q.push msg)
 			SendQCancel n blk -> modifyQ (Q.filter (filterPiece n (blockOffset blk)))
 			SendOChoke -> do modifyQ (Q.filter filterAllPiece)
-					 modifyQ (Q.push Choke))
+					 modifyQ (Q.push Choke)
+			SendQRequestPrune n blk ->
+			    modifyQ (Q.filter (filterRequest n blk)))
     modifyQ :: (Q.Queue Message -> Q.Queue Message) -> Process SQCF SQST ()
     modifyQ f = modify (\s -> s { outQueue = f (outQueue s) })
     sendEvent = do
@@ -176,7 +179,9 @@ sendQueueP logC inC outC bandwC supC = spawnP (SQCF logC inC outC bandwC) (SQST 
     filterPiece n off m =
         case m of Piece n off _ -> False
                   _             -> True
-
+    filterRequest n blk m =
+	case m of Request n blk -> False
+	          _             -> True
 
 peerChildren :: LogChannel -> Handle -> MgrChannel -> PieceMgrChannel
 	     -> FSPChannel -> StatusChan -> PieceMap -> Int -> IO Children
@@ -307,7 +312,10 @@ peerP pMgrC pieceMgrC fsC pm logC nPieces h outBound inBound sendBWC statC supC 
 			    (down, ndr) = RC.extractRate t dr
 			logInfo $ "Peer has rates up/down: " ++ show up ++ "/" ++ show down
 			sendP retCh (up, down, i) >>= syncP
-			modify (\s -> s { upRate = nur , downRate = ndr }))
+			modify (\s -> s { upRate = nur , downRate = ndr })
+		    CancelBlock pn blk -> do
+			modify (\s -> s { blockQueue = S.delete (pn, blk) $ blockQueue s })
+			syncP =<< (sendPC outCh $ SendQRequestPrune pn blk))
 	timerEvent = do
 	    evt <- recvPC timerCh
 	    wrapP evt (\() -> do
