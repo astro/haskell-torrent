@@ -3,6 +3,7 @@ module PieceMgrP
     , PieceMgrChannel
     , ChokeInfoChannel
     , ChokeInfoMsg(..)
+    , Blocks(..)
     , start
     , createPieceDb
     )
@@ -65,7 +66,15 @@ data InProgressPiece = InProgressPiece
 -- INTERFACE
 ----------------------------------------------------------------------
 
-data PieceMgrMsg = GrabBlocks Int [PieceNum] (Channel [(PieceNum, [Block])])
+-- | When the PieceMgrP returns blocks to a peer, it will return them in either
+--   "Leech Mode" or in "Endgame mode". The "Leech mode" is when the client is
+--   leeching like normal. The "Endgame mode" is when the client is entering the
+--   endgame. This means that the Peer should act differently to the blocks.
+data Blocks = Leech [(PieceNum, [Block])]
+	    | Endgame [(PieceNum, [Block])]
+
+-- | Messages for RPC towards the PieceMgr.
+data PieceMgrMsg = GrabBlocks Int [PieceNum] (Channel Blocks)
                    -- ^ Ask for grabbing some blocks
                  | StoreBlock PieceNum Block B.ByteString
                    -- ^ Ask for storing a block on the file system
@@ -246,12 +255,12 @@ blockPiece blockSz pieceSize = build pieceSize 0 []
 --   the @n@. In doing so, it will only consider pieces in @eligible@. It returns a
 --   pair @(blocks, db')@, where @blocks@ are the blocks it picked and @db'@ is the resulting
 --   db with these blocks removed.
-grabBlocks' :: Int -> [PieceNum] -> PieceMgrProcess [(PieceNum, [Block])]
+grabBlocks' :: Int -> [PieceNum] -> PieceMgrProcess Blocks
 grabBlocks' k eligible = tryGrabProgress k eligible []
   where
     -- Grabbing blocks is a state machine implemented by tail calls
     -- Try grabbing pieces from the pieces in progress first
-    tryGrabProgress 0 _  captured = return captured
+    tryGrabProgress 0 _  captured = return $ Leech captured
     tryGrabProgress n ps captured = do
 	inprog <- gets inProgress
         case ps `intersect` fmap fst (M.toList inprog) of
@@ -273,7 +282,7 @@ grabBlocks' k eligible = tryGrabProgress k eligible []
     tryGrabPending n ps captured = do
 	pending <- gets pendingPieces
         case ps `intersect` pending of
-          []    -> return captured -- No (more) pieces to download, return
+          []    -> return $ Leech captured -- No (more) pieces to download, return
           ls    -> do
 	      h <- pickRandom ls
 	      infMap <- gets infoMap

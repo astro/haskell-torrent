@@ -420,7 +420,10 @@ peerP pMgrC pieceMgrC fsC pm logC nPieces h outBound inBound sendBWC statC supC 
 	    ps <- gets peerPieces
 	    syncP =<< sendPC pieceMgrCh (GrabBlocks n ps c)
 	    blks <- syncP =<< recvP c (const True)
-	    return [(pn, b) | (pn, blklst) <- blks, b <- blklst]
+	    case blks of
+		Leech blks -> return [(pn, b) | (pn, blklst) <- blks, b <- blklst]
+		_          -> do logFatal $ "Endgame not supported yet!"
+			         fail "Foo" -- Perhaps build a better way to fail
         loMark = 10
         hiMark = 15 -- These two values are chosen rather arbitrarily at the moment.
 
