@@ -63,6 +63,11 @@ wish-list.
    - Make the client be able to select what processes that are allowed to
      log what (perhaps write a DSL for it).
    - When closing, gracefully tell the tracker about it.
+   - When running the endgame, shuffle the returned blocks so different
+     peers are likely to download different blocks.
+   - Let Piece Sets be S.Set PieceNum rather than [PieceNum]. They are
+     larger than 1000 for some large torrents, so it makes sense to shift to
+     a better representation.
 
 Known Bugs
 ----------
@@ -81,8 +86,7 @@ Before releasing into the "wild"
      faster SHA1 library would be really beneficial.
    - Handle Endgame. Endgame is nasty but necessary.
      Here is the list of what to do:
-        * Pick pieces from the hand-out group which we can get from a peer
-          (in the eligible set), shuffle. Return to Peer
+        * Enable handling of CANCEL messages from the ChokeMgr in Peers.
         * When peer completes a block, broadcast CANCEL messages through
           ChokeMgrP
 
