@@ -46,6 +46,7 @@ data PieceDB = PieceDB
     , donePiece     :: [PieceNum] -- ^ Pieces that are done
     , donePush      :: [PieceNum] -- ^ Pieces that should be pushed to the Choke Mgr.
     , inProgress    :: M.Map PieceNum InProgressPiece -- ^ Pieces in progress
+    , downloading   :: [(PieceNum, Block)]    -- ^ Blocks we are currently downloading
     , infoMap       :: PieceMap   -- ^ Information about pieces
     }
 
@@ -131,6 +132,7 @@ start logC mgrC fspC chokeC statC db supC =
 		       syncP =<< sendP c blocks
 		StoreBlock pn blk d ->
 		    do storeBlock pn blk d
+		       modify (\s -> s { downloading = downloading s \\ [(pn, blk)] })
 		       done <- updateProgress pn blk
 		       when done
 			   (do assertPieceComplete pn
@@ -169,7 +171,7 @@ start logC mgrC fspC chokeC statC db supC =
 ----------------------------------------------------------------------
 
 createPieceDb :: PiecesDoneMap -> PieceMap -> PieceDB
-createPieceDb mmap pmap = PieceDB pending done [] M.empty pmap
+createPieceDb mmap pmap = PieceDB pending done [] M.empty [] pmap
   where pending = M.keys $ M.filter (==False) mmap
         done    = M.keys $ M.filter (==True) mmap
 
@@ -196,8 +198,11 @@ putbackPiece :: PieceNum -> PieceMgrProcess ()
 putbackPiece pn = modify (\db -> db { inProgress = M.delete pn (inProgress db),
                                       pendingPieces = pn : pendingPieces db })
 
+-- | Put back a block for downloading.
+--   TODO: This is rather slow, due to the (\\) call, but hopefully happens rarely.
 putbackBlock :: (PieceNum, Block) -> PieceMgrProcess ()
-putbackBlock (pn, blk) = modify (\db -> db { inProgress = ndb (inProgress db)})
+putbackBlock (pn, blk) = modify (\db -> db { inProgress = ndb (inProgress db)
+					   , downloading = downloading db \\ [(pn, blk)]})
   where ndb db = M.alter f pn db
         -- The first of these might happen in the endgame
         f Nothing     = error "The 'impossible' happened, are you implementing endgame?"
@@ -209,6 +214,10 @@ assertPieceComplete :: PieceNum -> PieceMgrProcess ()
 assertPieceComplete pn = do
     inprog <- gets inProgress
     let ipp = fromJust $ M.lookup pn inprog
+    dl <- gets downloading
+    unless (assertAllDownloaded dl pn)
+      (do logError $ "Could not assert that all pieces were downloaded when completing a piece"
+	  stopP)
     unless (assertComplete ipp)
       (do logError $ "Could not assert completion of the piece with block state " ++ show ipp
 	  stopP)
@@ -220,6 +229,7 @@ assertPieceComplete pn = do
         checkContents os l blks = case foldl checkBlock (os, l, True) blks of
                                     (_, 0, True) -> True
                                     _            -> False
+	assertAllDownloaded blocks pn = all (\(pn', _) -> pn /= pn') blocks
 
 -- | Update the progress on a Piece. When we get a block from the piece, we will
 --   track this in the Piece Database. This function returns a pair @(complete, nDb)@
@@ -262,7 +272,8 @@ grabBlocks' k eligible = do
     if blocks == [] && pend == []
 	then do blks <- grabEndGame k eligible
 		return $ Endgame blks
-	else return $ Leech blocks
+	else do modify (\s -> s { downloading = blocks ++ (downloading s) })
+		return $ Leech blocks
   where
     -- Grabbing blocks is a state machine implemented by tail calls
     -- Try grabbing pieces from the pieces in progress first

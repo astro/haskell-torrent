@@ -81,9 +81,6 @@ Before releasing into the "wild"
      faster SHA1 library would be really beneficial.
    - Handle Endgame. Endgame is nasty but necessary.
      Here is the list of what to do:
-        * When handing out pieces, track that they were handed out in the
-          PieceMgr. This allows us to give them to others.
-        * When completing blocks, remove them from the handed out group.
         * Pick pieces from the hand-out group which we can get from a peer
           (in the eligible set), shuffle. Return to Peer
         * When peer completes a block, broadcast CANCEL messages through
