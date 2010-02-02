@@ -223,11 +223,9 @@ assertPieceComplete pn = do
     let ipp = fromJust $ M.lookup pn inprog
     dl <- gets downloading
     unless (assertAllDownloaded dl pn)
-      (do logError $ "Could not assert that all pieces were downloaded when completing a piece"
-	  stopP)
+      (fail "Could not assert that all pieces were downloaded when completing a piece")
     unless (assertComplete ipp)
-      (do logError $ "Could not assert completion of the piece with block state " ++ show ipp
-	  stopP)
+      (fail $ "Could not assert completion of the piece with block state " ++ show ipp)
   where assertComplete ip = checkContents 0 (ipSize ip) (S.toAscList (ipHaveBlocks ip))
         -- Check a single block under assumptions of a cursor at offs
         checkBlock (offs, left, state) blk = (offs + blockSize blk,
