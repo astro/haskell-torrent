@@ -70,7 +70,7 @@ data InProgressPiece = InProgressPiece
 --   "Leech Mode" or in "Endgame mode". The "Leech mode" is when the client is
 --   leeching like normal. The "Endgame mode" is when the client is entering the
 --   endgame. This means that the Peer should act differently to the blocks.
-data Blocks = Leech [(PieceNum, [Block])]
+data Blocks = Leech [(PieceNum, Block)]
 	    | Endgame [(PieceNum, [Block])]
 
 -- | Messages for RPC towards the PieceMgr.
@@ -256,11 +256,17 @@ blockPiece blockSz pieceSize = build pieceSize 0 []
 --   pair @(blocks, db')@, where @blocks@ are the blocks it picked and @db'@ is the resulting
 --   db with these blocks removed.
 grabBlocks' :: Int -> [PieceNum] -> PieceMgrProcess Blocks
-grabBlocks' k eligible = tryGrabProgress k eligible []
+grabBlocks' k eligible = do
+    blocks <- tryGrabProgress k eligible []
+    pend <- gets pendingPieces
+    if blocks == [] && pend == []
+	then do blks <- grabEndGame k eligible
+		return $ Endgame blks
+	else return $ Leech blocks
   where
     -- Grabbing blocks is a state machine implemented by tail calls
     -- Try grabbing pieces from the pieces in progress first
-    tryGrabProgress 0 _  captured = return $ Leech captured
+    tryGrabProgress 0 _  captured = return captured
     tryGrabProgress n ps captured = do
 	inprog <- gets inProgress
         case ps `intersect` fmap fst (M.toList inprog) of
@@ -277,12 +283,12 @@ grabBlocks' k eligible = tryGrabProgress k eligible []
              -- All pieces are taken, try the next one.
              then tryGrabProgress n (ps \\ [p]) captured
              else do modify (\db -> db { inProgress = M.insert p nIpp inprog })
-		     tryGrabProgress (n - length grabbed) ps ((p, grabbed) : captured)
+		     tryGrabProgress (n - length grabbed) ps ([(p,g) | g <- grabbed] ++ captured)
     -- Try grabbing pieces from the pending blocks
     tryGrabPending n ps captured = do
 	pending <- gets pendingPieces
         case ps `intersect` pending of
-          []    -> return $ Leech captured -- No (more) pieces to download, return
+          []    -> return $ captured -- No (more) pieces to download, return
           ls    -> do
 	      h <- pickRandom ls
 	      infMap <- gets infoMap
@@ -293,6 +299,7 @@ grabBlocks' k eligible = tryGrabProgress k eligible []
               modify (\db -> db { pendingPieces = pendingPieces db \\ [h],
                                   inProgress    = M.insert h ipp inProg })
 	      tryGrabProgress n ps captured
+    grabEndGame n ps = return []
     pickRandom pieces = do
 	n <- liftIO $ getStdRandom (\gen -> randomR (0, length pieces - 1) gen)
 	return $ pieces !! n
