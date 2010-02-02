@@ -44,10 +44,11 @@ import Process
 data PieceDB = PieceDB
     { pendingPieces :: [PieceNum] -- ^ Pieces currently pending download
     , donePiece     :: [PieceNum] -- ^ Pieces that are done
-    , donePush      :: [PieceNum] -- ^ Pieces that should be pushed to the Choke Mgr.
+    , donePush      :: [ChokeInfoMsg] -- ^ Pieces that should be pushed to the Choke Mgr.
     , inProgress    :: M.Map PieceNum InProgressPiece -- ^ Pieces in progress
     , downloading   :: [(PieceNum, Block)]    -- ^ Blocks we are currently downloading
     , infoMap       :: PieceMap   -- ^ Information about pieces
+    , endGaming     :: Bool       -- ^ If we have done any endgame work this is true
     }
 
 -- | The InProgressPiece data type describes pieces in progress of being downloaded.
@@ -87,7 +88,9 @@ data PieceMgrMsg = GrabBlocks Int [PieceNum] (Channel Blocks)
 		   -- ^ Get the pieces which are already done
 
 data ChokeInfoMsg = PieceDone PieceNum
+		  | BlockComplete PieceNum Block
                   | TorrentComplete
+    deriving Eq
 
 type PieceMgrChannel = Channel PieceMgrMsg
 type ChokeInfoChannel = Channel ChokeInfoMsg
@@ -117,7 +120,7 @@ start logC mgrC fspC chokeC statC db supC =
 	      then receiveEvt
 	      else chooseP [receiveEvt, sendEvt (head dl)]) >>= syncP
 	sendEvt elem = do
-	    ev <- sendPC chokeCh (PieceDone elem)
+	    ev <- sendPC chokeCh elem
 	    wrapP ev remDone
 	remDone :: () -> Process PieceMgrCfg PieceDB ()
 	remDone () = modify (\db -> db { donePush = tail (donePush db) })
@@ -133,6 +136,7 @@ start logC mgrC fspC chokeC statC db supC =
 		StoreBlock pn blk d ->
 		    do storeBlock pn blk d
 		       modify (\s -> s { downloading = downloading s \\ [(pn, blk)] })
+		       handleEndGame pn blk
 		       done <- updateProgress pn blk
 		       when done
 			   (do assertPieceComplete pn
@@ -160,8 +164,11 @@ start logC mgrC fspC chokeC statC db supC =
 		                   $ S.union inProg pend 
 		    syncP =<< sendP retC (not i))
 	storeBlock n blk contents = syncP =<< (sendPC fspCh $ WriteBlock n blk contents)
+	handleEndGame pn blk =
+	    gets endGaming >>=
+	      flip when (modify (\db -> db { donePush = (BlockComplete pn blk) : donePush db }))
 	markDone pn = do
-	    modify (\db -> db { donePush = pn : donePush db })
+	    modify (\db -> db { donePush = (PieceDone pn) : donePush db })
 	checkPiece n = do
 	    ch <- liftIO channel
 	    syncP =<< (sendPC fspCh $ CheckPiece n ch)
@@ -171,7 +178,7 @@ start logC mgrC fspC chokeC statC db supC =
 ----------------------------------------------------------------------
 
 createPieceDb :: PiecesDoneMap -> PieceMap -> PieceDB
-createPieceDb mmap pmap = PieceDB pending done [] M.empty [] pmap
+createPieceDb mmap pmap = PieceDB pending done [] M.empty [] pmap False
   where pending = M.keys $ M.filter (==False) mmap
         done    = M.keys $ M.filter (==True) mmap
 
@@ -271,6 +278,8 @@ grabBlocks' k eligible = do
     pend <- gets pendingPieces
     if blocks == [] && pend == []
 	then do blks <- grabEndGame k (S.fromList eligible)
+		modify (\db -> db { endGaming = True })
+		logInfo $ "PieceMgr entered endgame."
 		return $ Endgame blks
 	else do modify (\s -> s { downloading = blocks ++ (downloading s) })
 		return $ Leech blocks
