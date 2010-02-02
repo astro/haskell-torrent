@@ -72,7 +72,7 @@ data InProgressPiece = InProgressPiece
 --   leeching like normal. The "Endgame mode" is when the client is entering the
 --   endgame. This means that the Peer should act differently to the blocks.
 data Blocks = Leech [(PieceNum, Block)]
-	    | Endgame [(PieceNum, [Block])]
+	    | Endgame [(PieceNum, Block)]
 
 -- | Messages for RPC towards the PieceMgr.
 data PieceMgrMsg = GrabBlocks Int [PieceNum] (Channel Blocks)
@@ -270,7 +270,7 @@ grabBlocks' k eligible = do
     blocks <- tryGrabProgress k eligible []
     pend <- gets pendingPieces
     if blocks == [] && pend == []
-	then do blks <- grabEndGame k eligible
+	then do blks <- grabEndGame k (S.fromList eligible)
 		return $ Endgame blks
 	else do modify (\s -> s { downloading = blocks ++ (downloading s) })
 		return $ Leech blocks
@@ -310,7 +310,11 @@ grabBlocks' k eligible = do
               modify (\db -> db { pendingPieces = pendingPieces db \\ [h],
                                   inProgress    = M.insert h ipp inProg })
 	      tryGrabProgress n ps captured
-    grabEndGame n ps = return []
+    grabEndGame n ps = do -- In endgame we are allowed to grab from the downloaders
+	dls <- liftM (filter (\(p, _) -> S.member p ps)) $ gets downloading
+	let shuffled = dls -- TODO: Shuffle this list
+	return $ take n shuffled
+
     pickRandom pieces = do
 	n <- liftIO $ getStdRandom (\gen -> randomR (0, length pieces - 1) gen)
 	return $ pieces !! n
