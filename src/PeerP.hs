@@ -245,14 +245,15 @@ data PCF = PCF { inCh :: Channel (Message, Integer)
 instance Logging PCF where
   getLogger cf = ("PeerP", logCh cf)
 
-data PST = PST { weChoke :: Bool
-	       , weInterested :: Bool
-	       , blockQueue :: S.Set (PieceNum, Block)
-	       , peerChoke :: Bool
-	       , peerInterested :: Bool
-	       , peerPieces :: [PieceNum]
-	       , upRate :: Rate
-	       , downRate :: Rate
+data PST = PST { weChoke :: Bool -- ^ True if we are choking the peer
+	       , weInterested :: Bool -- ^ True if we are interested in the peer
+	       , blockQueue :: S.Set (PieceNum, Block) -- ^ Blocks queued at the peer
+	       , peerChoke :: Bool -- ^ Is the peer choking us? True if yes
+	       , peerInterested :: Bool -- ^ True if the peer is interested
+	       , peerPieces :: [PieceNum] -- ^ List of pieces the peer has access to
+	       , upRate :: Rate -- ^ Upload rate towards the peer (estimated)
+	       , downRate :: Rate -- ^ Download rate from the peer (estimated)
+	       , runningEndgame :: Bool -- ^ True if we are in endgame
 	       }
 
 peerP :: MgrChannel -> PieceMgrChannel -> FSPChannel -> PieceMap -> LogChannel -> Int -> Handle
@@ -264,7 +265,7 @@ peerP pMgrC pieceMgrC fsC pm logC nPieces h outBound inBound sendBWC statC supC 
     tch <- channel
     ct <- getCurrentTime
     spawnP (PCF inBound outBound pMgrC pieceMgrC logC fsC ch sendBWC tch statC pm)
-	   (PST True False S.empty True False [] (RC.new ct) (RC.new ct))
+	   (PST True False S.empty True False [] (RC.new ct) (RC.new ct) False)
 	   (cleanupP startup (defaultStopHandler supC) cleanup)
   where startup = do
 	    tid <- liftIO $ myThreadId
@@ -422,7 +423,8 @@ peerP pMgrC pieceMgrC fsC pm logC nPieces h outBound inBound sendBWC statC supC 
 	    blks <- syncP =<< recvP c (const True)
 	    case blks of
 		Leech blks -> return blks
-		_          -> fail "Endgame not supported yet!" -- Perhaps build a better way to fail
+		Endgame blks ->
+		    modify (\s -> s { runningEndgame = True }) >> return blks
         loMark = 10
         hiMark = 15 -- These two values are chosen rather arbitrarily at the moment.
 
