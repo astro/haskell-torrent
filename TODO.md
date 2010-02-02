@@ -70,12 +70,13 @@ Before releasing into the "wild"
 --------------------------------
 
    - The client needs to handle multi-file torrents. It is not as hard as
-     it may sound — the only part of the system that needs to know about
+     it may sound - the only part of the system that needs to know about
      files is the code handling the file system. All other parts can just
      keep on transferring pieces.
    - We currently take space proportional to torrent size due to our SHA1
      calculation being slow and not use a file descriptor. Research into a
      faster SHA1 library would be really beneficial.
+   - Handle Endgame. Endgame is nasty but necessary.
 
 Items for later (no particular order)
 -------------------------------------
@@ -95,7 +96,6 @@ Items for later (no particular order)
    - Support UDP tracking extension
    - Support partial downloads (select files you want in the torrent)
    - Write an ETA estimator
-   - Handle Endgame. Endgame is nasty but necessary.
    - Write the Users Guide.
    - Design, build and improve a graphic UI.
    - Design, build and improve a protocol for communicating with the client.
