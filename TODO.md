@@ -36,6 +36,9 @@ wish-list.
    - When we grab pieces from the Piece Manager, let it provide us with a
      pruned set of pieces we can ask with later. This way, we only need to
      consider pieces we already have once and we get a faster system.
+
+     When doing this, only prune pieces which are done and checked.
+
    - The StatusP process is always fed static data. Feed it the correct data
      based on the current status: Are we a leecher or a seeder? And how much
      data is there left to download before we have the full file?
@@ -77,6 +80,14 @@ Before releasing into the "wild"
      calculation being slow and not use a file descriptor. Research into a
      faster SHA1 library would be really beneficial.
    - Handle Endgame. Endgame is nasty but necessary.
+     Here is the list of what to do:
+        * When handing out pieces, track that they were handed out in the
+          PieceMgr. This allows us to give them to others.
+        * When completing blocks, remove them from the handed out group.
+        * Pick pieces from the hand-out group which we can get from a peer
+          (in the eligible set), shuffle. Return to Peer
+        * When peer completes a block, broadcast CANCEL messages through
+          ChokeMgrP
 
 Items for later (no particular order)
 -------------------------------------
