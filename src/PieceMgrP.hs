@@ -332,5 +332,65 @@ grabBlocks' k eligible = do
 	in
 	    get >>= return . cBlock
 
+assertPieceDB :: PieceMgrProcess ()
+assertPieceDB = assertPending >> assertDone >> assertInProgress
+  where
+    -- If a piece is pending in the database, we have the following rules:
+    --
+    --  - It is not finished.
+    --  - It is not being downloaded
+    --  - It is not in progresss.
+    assertPending = do
+	pending <- gets pendingPieces
+	mapM_ checkPending pending
+
+    checkPending pn = do
+	done <- gets donePiece
+	when (pn `elem` done)
+	    (fail $ "Pending piece " ++ show pn ++ " is in the done list")
+	down <- gets downloading
+	when (pn `elem` map fst down)
+	    (fail $ "Pending piece " ++ show pn ++ " is in the downloading list")
+	inProg <- gets inProgress
+	when (case M.lookup pn inProg of
+		Nothing -> False
+		Just _  -> True)
+	    (fail $ "Pending piece " ++ show pn ++ " is in the progress map")
+    -- If a piece is done, we have the following rules:
+    --
+    --  - It is not pending.
+    --  - It is not in progress.
+    --  - There are no more downloading blocks.
+    assertDone    = do
+	done <- gets donePiece
+	mapM_  checkDone done
+    checkDone pn = do
+	pending <- gets pendingPieces
+	when (pn `elem` pending)
+	    (fail $ "Done piece " ++ show pn ++ " is in the pending list")
+	down <- gets downloading
+	when (pn `elem` map fst down)
+	    (fail $ "Done piece " ++ show pn ++ " is in the downloading list")
+	inProg <- gets inProgress
+	when (case M.lookup pn inProg of 
+		Nothing -> False
+		Just _  -> True)
+	    (fail $ "Done piece " ++ show pn ++ " is in the progress map")
+    -- If a piece is in Progress, we have:
+    --
+    --  - The piece is not Done
+    --  - The piece is not pending
+    --  - There is a relationship with what pieces are downloading
+    assertInProgress = do
+	inProg <- gets inProgress
+	mapM_ checkInProgress $ M.keys inProg
+    checkInProgress pn = do
+	done <- gets donePiece
+	when (pn `elem` done)
+	    (fail $ "Piece in progress " ++ show pn ++ " is in the done list")
+	pending <- gets pendingPieces
+	when (pn `elem` pending)
+	    (fail $ "Piece in progress " ++ show pn ++ " is in the pending list")
+	-- TODO: Downloading/inProgress relationship
 
 
