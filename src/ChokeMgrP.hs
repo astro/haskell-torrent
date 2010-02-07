@@ -256,9 +256,9 @@ performChokingUnchoking elected peers =
     --   be dead. Thus we can just skip it. We will eventually receive this knowledge
     --   through another channel.
     unchoke pi = unchokePeer (pChannel pi)
-		    `catch` (\BlockedOnDeadMVar -> return ())
+		    `catch` (\BlockedIndefinitelyOnMVar -> return ())
     choke   pi = chokePeer (pChannel pi)
-		    `catch` (\BlockedOnDeadMVar -> return ())
+		    `catch` (\BlockedIndefinitelyOnMVar -> return ())
     -- If we have k optimistic slots, @optChoke k peers@ will unchoke the first @k@ interested
     --  in us. The rest will either be unchoked if they are not interested (ensuring fast start
     --    should they become interested); or they will be choked to avoid TCP/IP congestion.
@@ -307,7 +307,7 @@ informDone pn = do
 	st <- get
 	c  <- ask
 	(a, s') <- liftIO $ runP c st (proc pi) `catches`
-	    [ Handler (\BlockedOnDeadMVar -> return ((), st)) ] -- Peer dead, ignore it
+	    [ Handler (\BlockedIndefinitelyOnMVar -> return ((), st)) ] -- Peer dead, ignore it
 	put s'
 	return a
     proc pi = do
@@ -322,7 +322,7 @@ informBlockComplete pn blk = do
 	st <- get
 	c  <- ask
 	(a, s') <- liftIO $ runP c st (proc pi) `catches`
-	    [ Handler (\BlockedOnDeadMVar -> return ((), st)) ] -- Peer dead, ignore it
+	    [ Handler (\BlockedIndefinitelyOnMVar -> return ((), st)) ] -- Peer dead, ignore it
 	put s'
 	return a
     proc pi = do
@@ -339,7 +339,7 @@ updateDB = do
 	st <- get
 	c  <- ask
 	(a, s') <- liftIO $ runP c st (proc ch pi) `catches`
-	    [ Handler (\BlockedOnDeadMVar -> return (pi, st)) ] -- Peer Dead, ignore it
+	    [ Handler (\BlockedIndefinitelyOnMVar -> return (pi, st)) ] -- Peer Dead, ignore it
 	put s'
 	return a
       proc ch pi = do
