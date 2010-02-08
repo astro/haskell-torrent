@@ -45,6 +45,7 @@ import Control.Monad.State
 import qualified Data.ByteString.Char8 as B
 import qualified Data.ByteString.Lazy as L
 import qualified Data.Map as M
+import qualified SparseMap as SM
 import Data.Maybe
 import System.IO
 import System.Directory (createDirectoryIfMissing)
@@ -167,7 +168,7 @@ checkPiece inf handles = do
 --   then creating the data structure here. This is perhaps better in the long run.
 checkFile :: Handles -> PieceMap -> IO PiecesDoneMap
 checkFile handles pm = do l <- mapM checkP pieces
-                          return $ M.fromList l
+                          return $ SM.fromList l
     where pieces = M.toAscList pm
           checkP :: (PieceNum, PieceInfo) -> IO (PieceNum, Bool)
           checkP (pn, pInfo) = do b <- checkPiece pInfo handles
@@ -197,7 +198,7 @@ mkPieceMap bc = fetchData
 
 -- | Predicate function. True if nothing is missing from the map.
 canSeed :: PiecesDoneMap -> Bool
-canSeed = M.fold (&&) True
+canSeed = SM.all (== True)
 
 -- | Process a BCoded torrent file. Create directories, open the files
 --   in question, check it and return Handles plus a haveMap for the

@@ -18,6 +18,7 @@ import Data.List
 import Data.Maybe
 import qualified Data.ByteString as B
 import qualified Data.Map as M
+import qualified SparseMap as SM
 import qualified Data.Set as S
 
 import Prelude hiding (log)
@@ -45,7 +46,7 @@ data PieceDB = PieceDB
     { pendingPieces :: [PieceNum] -- ^ Pieces currently pending download
     , donePiece     :: [PieceNum] -- ^ Pieces that are done
     , donePush      :: [ChokeInfoMsg] -- ^ Pieces that should be pushed to the Choke Mgr.
-    , inProgress    :: M.Map PieceNum InProgressPiece -- ^ Pieces in progress
+    , inProgress    :: SM.SparseMap PieceNum InProgressPiece -- ^ Pieces in progress
     , downloading   :: [(PieceNum, Block)]    -- ^ Blocks we are currently downloading
     , infoMap       :: PieceMap   -- ^ Information about pieces
     , endGaming     :: Bool       -- ^ If we have done any endgame work this is true
@@ -62,7 +63,7 @@ data InProgressPiece = InProgressPiece
     { ipDone  :: Int -- ^ Number of blocks when piece is done
     , ipHaveBlocks :: S.Set Block -- ^ The blocks we have
     , ipPendingBlocks :: [Block] -- ^ Blocks still pending
-    } deriving Show
+    } deriving (Show, Eq)
 
 -- INTERFACE
 ----------------------------------------------------------------------
@@ -164,7 +165,7 @@ start logC mgrC fspC chokeC statC db supC =
 		GetDone c -> do done <- gets donePiece
 				syncP =<< sendP c done
 		AskInterested pieces retC -> do
-		    inProg <- liftM (S.fromList . M.keys) $ gets inProgress
+		    inProg <- liftM (S.fromList . SM.keys) $ gets inProgress
 		    pend   <- liftM S.fromList $ gets pendingPieces
 		    -- @i@ is the intersection with with we need and the peer has.
 		    let i = S.null $ S.intersection (S.fromList pieces)
@@ -185,16 +186,16 @@ start logC mgrC fspC chokeC statC db supC =
 ----------------------------------------------------------------------
 
 createPieceDb :: PiecesDoneMap -> PieceMap -> PieceDB
-createPieceDb mmap pmap = PieceDB pending done [] M.empty [] pmap False
-  where pending = M.keys $ M.filter (==False) mmap
-        done    = M.keys $ M.filter (==True) mmap
+createPieceDb mmap pmap = PieceDB pending done [] SM.empty [] pmap False
+  where pending = SM.keys $ SM.filter (==False) mmap
+        done    = SM.keys $ SM.filter (==True) mmap
 
 ----------------------------------------------------------------------
 
 -- | The call @completePiece db pn@ will mark that the piece @pn@ is completed
 --   and return the updated Piece Database.
 completePiece :: PieceNum -> PieceMgrProcess ()
-completePiece pn = modify (\db -> db { inProgress = M.delete pn (inProgress db),
+completePiece pn = modify (\db -> db { inProgress = SM.delete pn (inProgress db),
                                        donePiece  = pn : donePiece db })
 
 -- | Handle torrent completion
@@ -210,7 +211,7 @@ checkFullCompletion = do
 -- | The call @putBackPiece db pn@ will mark the piece @pn@ as not being complete
 --   and put it back into the download queue again. Returns the new database.
 putbackPiece :: PieceNum -> PieceMgrProcess ()
-putbackPiece pn = modify (\db -> db { inProgress = M.delete pn (inProgress db),
+putbackPiece pn = modify (\db -> db { inProgress = SM.delete pn (inProgress db),
                                       pendingPieces = pn : pendingPieces db })
 
 -- | Put back a block for downloading.
@@ -218,7 +219,7 @@ putbackPiece pn = modify (\db -> db { inProgress = M.delete pn (inProgress db),
 putbackBlock :: (PieceNum, Block) -> PieceMgrProcess ()
 putbackBlock (pn, blk) = modify (\db -> db { inProgress = ndb (inProgress db)
 					   , downloading = downloading db \\ [(pn, blk)]})
-  where ndb db = M.alter f pn db
+  where ndb db = SM.alter f pn db
         -- The first of these might happen in the endgame
         f Nothing     = error "The 'impossible' happened, are you implementing endgame?"
         f (Just ipp) = Just ipp { ipPendingBlocks = blk : ipPendingBlocks ipp }
@@ -228,7 +229,7 @@ putbackBlock (pn, blk) = modify (\db -> db { inProgress = ndb (inProgress db)
 assertPieceComplete :: PieceNum -> PieceMgrProcess ()
 assertPieceComplete pn = do
     inprog <- gets inProgress
-    ipp <- case M.lookup pn inprog of
+    ipp <- case SM.lookup pn inprog of
 		Nothing -> fail "assertPieceComplete: Could not lookup piece number"
 		Just x -> return x
     dl <- gets downloading
@@ -258,7 +259,7 @@ assertPieceComplete pn = do
 updateProgress :: PieceNum -> Block -> PieceMgrProcess Bool
 updateProgress pn blk = do
     ipdb <- gets inProgress
-    case M.lookup pn ipdb of
+    case SM.lookup pn ipdb of
       Nothing -> do logDebug "updateProgress can't find progress block, error?"
 		    return False
       Just pg ->
@@ -269,7 +270,7 @@ updateProgress pn blk = do
                                  -- at times
                else checkComplete pg { ipHaveBlocks = S.insert blk blkSet }
   where checkComplete pg = do
-	    modify (\db -> db { inProgress = M.adjust (const pg) pn (inProgress db) })
+	    modify (\db -> db { inProgress = SM.adjust (const pg) pn (inProgress db) })
 	    logDebug $ "Iphave : " ++ show (ipHave pg) ++ " ipDone: " ++ show (ipDone pg)
 	    return (ipHave pg == ipDone pg)
         ipHave = S.size . ipHaveBlocks
@@ -304,13 +305,13 @@ grabBlocks' k eligible = do
     tryGrabProgress 0 _  captured = return captured
     tryGrabProgress n ps captured = do
 	inprog <- gets inProgress
-        case ps `intersect` fmap fst (M.toList inprog) of
+        case ps `intersect` fmap fst (SM.toList inprog) of
           []  -> tryGrabPending n ps captured
           (h:_) -> grabFromProgress n ps h captured
     -- The Piece @p@ was found, grab it
     grabFromProgress n ps p captured = do
         inprog <- gets inProgress
-	ipp <- case M.lookup p inprog of
+	ipp <- case SM.lookup p inprog of
 		  Nothing -> fail "grabFromProgress: could not lookup piece"
 		  Just x -> return x
         let (grabbed, rest) = splitAt n (ipPendingBlocks ipp)
@@ -319,7 +320,7 @@ grabBlocks' k eligible = do
         if grabbed == []
              -- All pieces are taken, try the next one.
              then tryGrabProgress n (ps \\ [p]) captured
-             else do modify (\db -> db { inProgress = M.insert p nIpp inprog })
+             else do modify (\db -> db { inProgress = SM.insert p nIpp inprog })
 		     tryGrabProgress (n - length grabbed) ps ([(p,g) | g <- grabbed] ++ captured)
     -- Try grabbing pieces from the pending blocks
     tryGrabPending n ps captured = do
@@ -334,7 +335,7 @@ grabBlocks' k eligible = do
               let sz  = length blockList
 	          ipp = InProgressPiece sz S.empty blockList
               modify (\db -> db { pendingPieces = pendingPieces db \\ [h],
-                                  inProgress    = M.insert h ipp inProg })
+                                  inProgress    = SM.insert h ipp inProg })
 	      tryGrabProgress n ps captured
     grabEndGame n ps = do -- In endgame we are allowed to grab from the downloaders
 	dls <- liftM (filter (\(p, _) -> S.member p ps)) $ gets downloading
@@ -370,7 +371,7 @@ assertPieceDB = assertPending >> assertDone >> assertInProgress >> assertDownloa
 	when (pn `elem` map fst down)
 	    (fail $ "Pending piece " ++ show pn ++ " is in the downloading list")
 	inProg <- gets inProgress
-	when (case M.lookup pn inProg of
+	when (case SM.lookup pn inProg of
 		Nothing -> False
 		Just _  -> True)
 	    (fail $ "Pending piece " ++ show pn ++ " is in the progress map")
@@ -390,7 +391,7 @@ assertPieceDB = assertPending >> assertDone >> assertInProgress >> assertDownloa
 	when (pn `elem` map fst down)
 	    (fail $ "Done piece " ++ show pn ++ " is in the downloading list")
 	inProg <- gets inProgress
-	when (case M.lookup pn inProg of 
+	when (case SM.lookup pn inProg of 
 		Nothing -> False
 		Just _  -> True)
 	    (fail $ "Done piece " ++ show pn ++ " is in the progress map")
@@ -403,7 +404,7 @@ assertPieceDB = assertPending >> assertDone >> assertInProgress >> assertDownloa
     --    - If a block is ipHave, it is not in the downloading list
     assertInProgress = do
 	inProg <- gets inProgress
-	mapM_ checkInProgress $ M.toList inProg
+	mapM_ checkInProgress $ SM.toList inProg
     checkInProgress (pn, ipp) = do
 	when ( (S.size $ ipHaveBlocks ipp) >= ipDone ipp)
 	    (fail $ "Piece in progress " ++ show pn
@@ -419,7 +420,7 @@ assertPieceDB = assertPending >> assertDone >> assertInProgress >> assertDownloa
 	mapM_ checkDownloading down
     checkDownloading (pn, blk) = do
 	prog <- gets inProgress
-	case M.lookup pn prog of
+	case SM.lookup pn prog of
 	    Nothing -> fail $ "Piece " ++ show pn ++ " not in progress while We think it was"
 	    Just ipp -> do
 		when (blk `elem` ipPendingBlocks ipp)

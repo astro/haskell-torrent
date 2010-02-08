@@ -57,6 +57,7 @@ import qualified Data.ByteString as B
 import qualified Data.ByteString.Lazy as L
 import Data.List
 import qualified Data.Map as M
+import qualified SparseMap as SM
 
 import Network
 import Numeric
@@ -92,25 +93,25 @@ type PieceSize = Int
 data PieceInfo = PieceInfo {
       offset :: Integer, -- ^ Offset of the piece, might be greater than Int
       len :: Integer,    -- ^ Length of piece; usually a small value
-      digest :: String   -- ^ Digest of piece; taken from the .torret file
+      digest :: String   -- ^ Digest of piece; taken from the .torrent file
     } deriving (Eq, Show)
 
 type PieceMap = M.Map PieceNum PieceInfo
 
 -- | The PiecesDoneMap is a map which is true if we have the piece and false otherwise
-type PiecesDoneMap = M.Map PieceNum Bool
+type PiecesDoneMap = SM.SparseMap PieceNum Bool
 
 -- | Given what pieces that are done, return the current state of the client.
 determineState :: PiecesDoneMap -> TorrentState
-determineState pd | F.all (==True) pd = Seeding
-                  | otherwise         = Leeching
+determineState pd | SM.all (==True) pd = Seeding
+                  | otherwise          = Leeching
 
 -- | Return the amount of bytes left on a torrent given what pieces are done and the
 --   map of the shape of the torrent in question.
 bytesLeft :: PiecesDoneMap -> PieceMap -> Integer
 bytesLeft done pm =
     M.foldWithKey (\k v accu ->
-	case M.lookup k done of
+	case SM.lookup k done of
 	       Just False -> (len v) + accu
 	       _          -> accu) 0 pm
 
